@@ -18,6 +18,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -31,8 +32,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.kiwix.kiwixmobile.core.StorageObserver
 import org.kiwix.kiwixmobile.core.base.BackPressActivityExtensions
+import org.kiwix.kiwixmobile.core.dao.DownloadRoomDao
 import org.kiwix.kiwixmobile.core.dao.LibkiwixBookOnDisk
 import org.kiwix.kiwixmobile.core.data.DataSource
+import org.kiwix.kiwixmobile.core.downloader.Downloader
+import org.kiwix.kiwixmobile.core.downloader.model.DownloadModel
 import org.kiwix.kiwixmobile.core.main.MainRepositoryActions
 import org.kiwix.kiwixmobile.core.reader.ZimFileReader
 import org.kiwix.kiwixmobile.core.reader.ZimReaderSource
@@ -47,6 +51,7 @@ import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.SelectionMode
 import org.kiwix.kiwixmobile.nav.destination.library.StorageSelectDialogConfig
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.ReadeWritePermissionResultAction
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.ReadeWritePermissionResultAction.ScanStorage
+import org.kiwix.kiwixmobile.nav.destination.library.online.helper.ResolveBookClickAction
 import org.kiwix.kiwixmobile.utils.effects.ShowStorageSelectionDialog
 import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.DeleteFiles
 import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.DeleteFilesUseCase
@@ -58,10 +63,15 @@ import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.ValidateZIMFiles
 import org.kiwix.libzim.Archive
 import org.kiwix.sharedFunctions.MainDispatcherRule
 import java.io.File
+import javax.inject.Provider
 
 @ExperimentalCoroutinesApi
 class LocalLibraryViewModelTest {
   private val libkiwixBookOnDisk: LibkiwixBookOnDisk = mockk(relaxed = true)
+  private val downloadRoomDao: DownloadRoomDao = mockk(relaxed = true)
+  private val downloaderProvider: Provider<Downloader> = mockk(relaxed = true)
+  private val resolveBookClickAction: ResolveBookClickAction = mockk(relaxed = true)
+  private val downloadModels = MutableStateFlow<List<DownloadModel>>(emptyList())
   private val storageObserver: StorageObserver = mockk(relaxed = true)
   private val dataSource: DataSource = mockk(relaxed = true)
   private val application: Application = mockk(relaxed = true)
@@ -101,6 +111,7 @@ class LocalLibraryViewModelTest {
 
     every { dataSource.booksOnDiskAsListItems() } returns flowOf(emptyList())
     every { libkiwixBookOnDisk.books() } returns flowOf(emptyList())
+    every { downloadRoomDao.downloads() } returns downloadModels
     coEvery { storageObserver.getBooksOnFileSystem(any()) } returns flowOf(emptyList())
     every { kiwixDataStore.prefIsTest } returns flowOf(true)
     coEvery { kiwixDataStore.isScanFileSystemTest } returns flowOf(false)
@@ -128,6 +139,9 @@ class LocalLibraryViewModelTest {
   private fun createViewModel(): LocalLibraryViewModel {
     val vm = LocalLibraryViewModel(
       libkiwixBookOnDisk,
+      downloadRoomDao,
+      downloaderProvider,
+      resolveBookClickAction,
       storageObserver,
       dataSource,
       application,
@@ -155,6 +169,22 @@ class LocalLibraryViewModelTest {
       assertTrue(state.fileSelectListState.bookOnDiskListItems.isEmpty())
       cancelAndIgnoreRemainingEvents()
     }
+  }
+
+  @Test
+  fun `active downloads populate state and selection resets when they finish`() = runTest {
+    downloadModels.value = listOf(mockk(relaxed = true))
+    mainDispatcherRule.dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(viewModel.uiState.value.downloadItems).hasSize(1)
+    viewModel.selectDownloadsTab()
+    assertTrue(viewModel.uiState.value.isDownloadsTabSelected)
+
+    downloadModels.value = emptyList()
+    mainDispatcherRule.dispatcher.scheduler.advanceUntilIdle()
+
+    assertThat(viewModel.uiState.value.downloadItems).isEmpty()
+    assertFalse(viewModel.uiState.value.isDownloadsTabSelected)
   }
 
   @Test

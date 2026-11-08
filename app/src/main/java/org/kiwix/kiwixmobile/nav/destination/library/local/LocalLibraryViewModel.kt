@@ -56,9 +56,11 @@ import org.kiwix.kiwixmobile.core.R.string
 import org.kiwix.kiwixmobile.core.StorageObserver
 import org.kiwix.kiwixmobile.core.base.BackPressActivityExtensions
 import org.kiwix.kiwixmobile.core.base.SideEffect
+import org.kiwix.kiwixmobile.core.dao.DownloadRoomDao
 import org.kiwix.kiwixmobile.core.dao.LibkiwixBookOnDisk
 import org.kiwix.kiwixmobile.core.data.DataSource
 import org.kiwix.kiwixmobile.core.di.IoDispatcher
+import org.kiwix.kiwixmobile.core.downloader.Downloader
 import org.kiwix.kiwixmobile.core.extensions.canReadFile
 import org.kiwix.kiwixmobile.core.extensions.navigateToAppSettings
 import org.kiwix.kiwixmobile.core.extensions.toast
@@ -73,6 +75,7 @@ import org.kiwix.kiwixmobile.core.utils.TAG_KIWIX
 import org.kiwix.kiwixmobile.core.utils.ZERO
 import org.kiwix.kiwixmobile.core.utils.datastore.KiwixDataStore
 import org.kiwix.kiwixmobile.core.utils.dialog.AlertDialogShower
+import org.kiwix.kiwixmobile.core.utils.dialog.KiwixDialog
 import org.kiwix.kiwixmobile.core.utils.effects.ManageExternalFilesPermissionDialog
 import org.kiwix.kiwixmobile.core.utils.effects.ReadPermissionRequiredDialog
 import org.kiwix.kiwixmobile.core.utils.files.Log
@@ -82,6 +85,11 @@ import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.BooksOnDiskListIte
 import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.SelectionMode.MULTI
 import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.SelectionMode.NORMAL
 import org.kiwix.kiwixmobile.nav.destination.library.StorageSelectDialogConfig
+import org.kiwix.kiwixmobile.nav.destination.library.online.helper.ResolveBookClickAction
+import org.kiwix.kiwixmobile.nav.destination.library.online.helper.ResolveBookClickAction.LibraryActionResult.CancelDownload
+import org.kiwix.kiwixmobile.nav.destination.library.online.helper.ResolveBookClickAction.LibraryActionResult.NoInternet
+import org.kiwix.kiwixmobile.nav.destination.library.online.helper.ResolveBookClickAction.LibraryActionResult.PauseResume
+import org.kiwix.kiwixmobile.nav.destination.library.online.helper.ResolveBookClickAction.LibraryActionResult.RetryDownload
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.LocalLibraryUiActions.CopyMoveErrorDialog
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.LocalLibraryUiActions.FileSystemScanDialog
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.LocalLibraryUiActions.ManageFilesPermissionDialog
@@ -110,9 +118,11 @@ import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.None
 import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.OpenFileWithNavigation
 import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.ShareFiles
 import org.kiwix.kiwixmobile.zimManager.fileselectView.effects.ValidateZIMFiles
+import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem.LibraryDownloadItem
 import org.kiwix.libkiwix.Book
 import java.io.File
 import javax.inject.Inject
+import javax.inject.Provider
 
 private const val DEFAULT_PROGRESS = 0
 private const val MAX_PROGRESS = 100
@@ -131,6 +141,9 @@ private const val SHOW_SCAN_DIALOG_DELAY = 2000L
 @HiltViewModel
 class LocalLibraryViewModel @Inject constructor(
   private val libkiwixBookOnDisk: LibkiwixBookOnDisk,
+  private val downloadRoomDao: DownloadRoomDao,
+  private val downloaderProvider: Provider<Downloader>,
+  private val resolveBookClickAction: ResolveBookClickAction,
   private val storageObserver: StorageObserver,
   private val dataSource: DataSource,
   private val context: Application,
@@ -180,6 +193,8 @@ class LocalLibraryViewModel @Inject constructor(
 
   data class LocalLibraryUiState(
     val fileSelectListState: FileSelectListState = FileSelectListState(emptyList()),
+    val downloadItems: List<LibraryDownloadItem> = emptyList(),
+    val isDownloadsTabSelected: Boolean = false,
     val isSwipeRefreshing: Boolean = false,
     val scanning: ScanningState = ScanningState(false, ZERO),
     val noFileView: NoFileView = NoFileView("", "", false),
@@ -277,6 +292,7 @@ class LocalLibraryViewModel @Inject constructor(
     coroutineJobs.apply {
       add(scanBooksFromStorage())
       add(updateBookItems())
+      add(observeDownloads())
       add(processFileSelectActions())
     }
   }
@@ -308,6 +324,60 @@ class LocalLibraryViewModel @Inject constructor(
       .onEach { books -> libkiwixBookOnDisk.insert(books) }
       .flowOn(ioDispatcher)
       .launchIn(viewModelScope)
+
+  private fun observeDownloads() =
+    downloadRoomDao.downloads()
+      .onEach { downloads ->
+        val downloadItems = downloads.map(::LibraryDownloadItem)
+        updateState { current ->
+          current.copy(
+            downloadItems = downloadItems,
+            isDownloadsTabSelected = current.isDownloadsTabSelected && downloadItems.isNotEmpty()
+          )
+        }
+      }
+      .catch { it.printStackTrace() }
+      .launchIn(viewModelScope)
+
+  fun selectLibraryTab() {
+    updateState { it.copy(isDownloadsTabSelected = false) }
+  }
+
+  fun selectDownloadsTab() {
+    updateState { current ->
+      current.copy(isDownloadsTabSelected = current.downloadItems.isNotEmpty())
+    }
+  }
+
+  fun onPauseResumeButtonClick(item: LibraryDownloadItem) {
+    when (val result = resolveBookClickAction.onPauseResumeButtonClick(item)) {
+      NoInternet -> context.toast(context.getString(string.no_network_connection))
+      is PauseResume -> withDownloader {
+        it.pauseResumeDownload(result.downloadId, result.isPaused)
+      }
+
+      else -> Unit
+    }
+  }
+
+  fun onStopButtonClick(item: LibraryDownloadItem) {
+    when (val result = resolveBookClickAction.onStopButtonClick(item)) {
+      NoInternet -> context.toast(context.getString(string.no_network_connection))
+      is RetryDownload -> withDownloader { it.retryDownload(result.downloadId) }
+      is CancelDownload -> alertDialogShower.show(
+        KiwixDialog.YesNoDialog.StopDownload,
+        { withDownloader { it.cancelDownload(result.downloadId) } }
+      )
+
+      else -> Unit
+    }
+  }
+
+  private fun withDownloader(block: (Downloader) -> Unit) {
+    viewModelScope.launch(ioDispatcher) {
+      block(downloaderProvider.get())
+    }
+  }
 
   private fun processFileSelectActions() =
     localLibraryUiActions

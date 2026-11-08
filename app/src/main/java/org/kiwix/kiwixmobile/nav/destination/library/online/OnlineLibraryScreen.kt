@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -124,6 +125,7 @@ import org.kiwix.kiwixmobile.nav.destination.library.online.viewmodel.OnlineLibr
 import org.kiwix.kiwixmobile.nav.destination.library.online.viewmodel.OnlineLibraryViewModel.OnlineLibraryUiState
 import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem
 import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem.DividerItem
+import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem.LibraryDownloadItem
 import kotlin.time.Duration.Companion.milliseconds
 
 const val ONLINE_LIBRARY_SEARCH_VIEW_TESTING_TAG = "onlineLibrarySearchViewTestingTag"
@@ -134,6 +136,8 @@ const val SHOW_FETCHING_LIBRARY_LAYOUT_TESTING_TAG = "showFetchingLibraryLayoutT
 const val ONLINE_DIVIDER_ITEM_TEXT_TESTING_TAG = "onlineDividerItemTextTag"
 const val LANGUAGE_TABS_ROW_TESTING_TAG = "languageTabsRowTestingTag"
 const val LANGUAGE_TAB_TESTING_TAG_PREFIX = "languageTabTestingTag_"
+const val DOWNLOADS_TAB_TESTING_TAG = "downloadsTabTestingTag"
+const val DOWNLOADS_TAB_ITEM_TESTING_TAG = "downloadsTabItemTestingTag"
 const val LOAD_MORE_DELAY = 150L
 private const val BACK_TO_TOP_ITEM_THRESHOLD = 5
 
@@ -151,6 +155,8 @@ fun OnlineLibraryScreen(
   navHostController: NavHostController,
   navigationIcon: @Composable () -> Unit
 ) {
+  val downloadsListState = rememberLazyListState()
+  val activeListState = if (uiState.isDownloadsTabSelected) downloadsListState else listState
   val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
   Scaffold(
     snackbarHost = { KiwixSnackbarHost(snackbarHostState = snackBarHostState) },
@@ -165,7 +171,7 @@ fun OnlineLibraryScreen(
     },
     floatingActionButton = {
       OnlineLibraryBackToTopButton(
-        listState = listState,
+        listState = activeListState,
         scrollBehavior = scrollBehavior,
         bottomAppBarScrollBehaviour = bottomAppBarScrollBehaviour
       )
@@ -184,7 +190,7 @@ fun OnlineLibraryScreen(
       paddingValues,
       onUserBackPressed,
       navHostController,
-      listState
+      activeListState
     )
   }
 }
@@ -209,6 +215,52 @@ fun LanguageTabsRow(
       thickness = ONE_DP
     )
     ScrollableTabRow(
+
+  @Composable
+  private fun DownloadsTabRow(
+    isSelected: Boolean,
+    onTabSelected: () -> Unit
+  ) {
+    ScrollableTabRow(
+      selectedTabIndex = 0,
+      edgePadding = SIXTEEN_DP,
+      containerColor = Color.Transparent,
+      divider = {},
+      indicator = { tabPositions ->
+        if (isSelected) {
+          tabPositions.firstOrNull()?.let { position ->
+            TabRowDefaults.SecondaryIndicator(
+              Modifier.tabIndicatorOffset(position),
+              color = MaterialTheme.colorScheme.primary
+            )
+          }
+        }
+      },
+      modifier = Modifier
+        .fillMaxWidth()
+        .semantics { testTag = DOWNLOADS_TAB_TESTING_TAG }
+    ) {
+      Tab(
+        selected = isSelected,
+        onClick = onTabSelected,
+        text = {
+          Text(
+            text = stringResource(string.downloading),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            color = if (isSelected) {
+              MaterialTheme.colorScheme.primary
+            } else {
+              MaterialTheme.colorScheme.onSurfaceVariant
+            }
+          )
+        },
+        modifier = Modifier
+          .height(FORTY_EIGHT_DP)
+          .semantics { testTag = DOWNLOADS_TAB_ITEM_TESTING_TAG }
+      )
+    }
+  }
       selectedTabIndex = safeIndex,
       edgePadding = SIXTEEN_DP,
       containerColor = Color.Transparent,
@@ -273,6 +325,13 @@ private fun OnlineLibraryMainContent(
       )
   ) {
     OnBackPressed(onUserBackPressed, navHostController)
+
+    if (uiState.items.any { it is LibraryDownloadItem }) {
+      DownloadsTabRow(
+        isSelected = uiState.isDownloadsTabSelected,
+        onTabSelected = onlineLibraryViewModel::selectDownloadsTab
+      )
+    }
 
     if (uiState.tabs.isNotEmpty()) {
       LanguageTabsRow(
@@ -354,16 +413,35 @@ private fun OnlineLibraryScreenContent(
   lazyListState: LazyListState,
   onlineLibraryViewModel: OnlineLibraryViewModel
 ) {
+  val catalogItems = uiState.items.filterNot { item ->
+    item is LibraryDownloadItem || (item is DividerItem && item.id == Long.MAX_VALUE)
+  }
   Box(
     modifier = Modifier.fillMaxSize(),
     contentAlignment = Alignment.Center
   ) {
-    if (uiState.showNoContent && !uiState.showScanningProgressBar && !uiState.isRefreshing) {
+    if (uiState.isDownloadsTabSelected) {
+      OnlineLibraryList(
+        uiState.copy(
+          items = uiState.items.filterIsInstance<LibraryDownloadItem>(),
+          isLoadingMore = false
+        ),
+        lazyListState,
+        onlineLibraryViewModel
+      )
+    } else if (
+      (uiState.showNoContent || catalogItems.isEmpty()) &&
+      !uiState.showScanningProgressBar && !uiState.isRefreshing
+    ) {
       NoContentView(uiState.noContentMessage)
     } else {
-      OnlineLibraryList(uiState, lazyListState, onlineLibraryViewModel)
+      OnlineLibraryList(
+        uiState.copy(items = catalogItems),
+        lazyListState,
+        onlineLibraryViewModel
+      )
     }
-    if (uiState.showScanningProgressBar) {
+    if (uiState.showScanningProgressBar && !uiState.isDownloadsTabSelected) {
       ShowFetchingLibraryLayout(uiState.scanningProgressBarMessage)
     }
   }

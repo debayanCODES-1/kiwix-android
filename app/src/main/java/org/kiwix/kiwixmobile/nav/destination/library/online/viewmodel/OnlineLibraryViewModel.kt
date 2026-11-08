@@ -200,7 +200,8 @@ class OnlineLibraryViewModel @Inject constructor(
     val showStorageSelectDialog: Boolean = false,
     val showCategoryDialog: Boolean = false,
     val tabs: List<LanguageTab> = emptyList(),
-    val selectedTabIndex: Int = 0
+    val selectedTabIndex: Int = 0,
+    val isDownloadsTabSelected: Boolean = false
   )
 
   /**
@@ -317,11 +318,18 @@ class OnlineLibraryViewModel @Inject constructor(
   }.launchIn(viewModelScope)
 
   private fun updateLibraryItems(items: List<LibraryListItem>) {
+    val hasCatalogItems = items.any { item ->
+      item !is LibraryDownloadItem && item.id != Long.MAX_VALUE
+    }
     _uiState.update { current ->
       current.copy(
         items = items,
-        noContentMessage = noContentMessageWhenItemsComesFromOnlineSource(items),
-        showNoContent = items.isEmpty()
+        isDownloadsTabSelected = current.isDownloadsTabSelected &&
+          items.any { it is LibraryDownloadItem },
+        noContentMessage = noContentMessageWhenItemsComesFromOnlineSource(
+          if (hasCatalogItems) items else emptyList()
+        ),
+        showNoContent = !hasCatalogItems
       )
     }
   }
@@ -392,8 +400,11 @@ class OnlineLibraryViewModel @Inject constructor(
 
   fun selectTab(index: Int) {
     if (index !in uiState.value.tabs.indices) return
-    if (index == uiState.value.selectedTabIndex) return
-    _uiState.update { it.copy(selectedTabIndex = index) }
+    val currentSelectedTabIndex = uiState.value.selectedTabIndex
+    _uiState.update {
+      it.copy(selectedTabIndex = index, isDownloadsTabSelected = false)
+    }
+    if (index == currentSelectedTabIndex) return
     when (
       val result = onlineLibraryTabsUseCase.selectTab(
         index = index,
@@ -446,6 +457,10 @@ class OnlineLibraryViewModel @Inject constructor(
 
       null -> Unit
     }
+  }
+
+  fun selectDownloadsTab() {
+    _uiState.update { it.copy(isDownloadsTabSelected = true) }
   }
 
   internal fun updateOnlineLibraryFilters(newRequest: OnlineLibraryRequest) {

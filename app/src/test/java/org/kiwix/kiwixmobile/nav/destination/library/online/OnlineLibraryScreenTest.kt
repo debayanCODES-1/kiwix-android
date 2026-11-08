@@ -50,10 +50,14 @@ import org.kiwix.kiwixmobile.core.ui.components.CONTENT_LOADING_PROGRESS_BAR_TES
 import org.kiwix.kiwixmobile.core.ui.components.SWIPE_REFRESH_TESTING_TAG
 import org.kiwix.kiwixmobile.core.ui.models.ActionMenuItem
 import org.kiwix.kiwixmobile.core.utils.ZERO
+import org.kiwix.kiwixmobile.nav.destination.library.online.DOWNLOAD_BOOK_ITEM_TESTING_TAG
+import org.kiwix.kiwixmobile.nav.destination.library.online.DOWNLOADS_TAB_ITEM_TESTING_TAG
+import org.kiwix.kiwixmobile.nav.destination.library.online.DOWNLOADS_TAB_TESTING_TAG
 import org.kiwix.kiwixmobile.nav.destination.library.online.viewmodel.OnlineLibraryViewModel
 import org.kiwix.kiwixmobile.nav.destination.library.online.viewmodel.OnlineLibraryViewModel.OnlineLibraryUiState
 import org.kiwix.kiwixmobile.zimManager.libraryView.AvailableSpaceCalculator
 import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem
+import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem.LibraryDownloadItem
 import org.kiwix.sharedFunctions.TestApplication
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -82,7 +86,8 @@ class OnlineLibraryScreenTest {
     noContentMessage: String = "",
     showNoContent: Boolean = false,
     tabs: List<OnlineLibraryViewModel.LanguageTab> = emptyList(),
-    selectedTabIndex: Int = 0
+    selectedTabIndex: Int = 0,
+    isDownloadsTabSelected: Boolean = false
   ): OnlineLibraryUiState = OnlineLibraryUiState(
     items = items,
     isRefreshing = isRefreshing,
@@ -94,7 +99,8 @@ class OnlineLibraryScreenTest {
     noContentMessage = noContentMessage,
     showNoContent = showNoContent,
     tabs = tabs,
-    selectedTabIndex = selectedTabIndex
+    selectedTabIndex = selectedTabIndex,
+    isDownloadsTabSelected = isDownloadsTabSelected
   )
 
   private fun renderScreen(
@@ -499,5 +505,66 @@ class OnlineLibraryScreenTest {
     composeTestRule
       .onNodeWithTag(LANGUAGE_TABS_ROW_TESTING_TAG)
       .assertDoesNotExist()
+  }
+
+  @Test
+  fun `shows downloads tab only while downloads exist`() {
+    renderScreen(createUiState(items = listOf(mockk<LibraryDownloadItem>(relaxed = true))))
+
+    composeTestRule.onNodeWithTag(DOWNLOADS_TAB_TESTING_TAG).assertExists()
+  }
+
+  @Test
+  fun `hides downloads tab when there are no active downloads`() {
+    renderScreen(createUiState(items = emptyList()))
+
+    composeTestRule.onNodeWithTag(DOWNLOADS_TAB_TESTING_TAG).assertDoesNotExist()
+  }
+
+  @Test
+  fun `catalog list excludes active downloads`() {
+    renderScreen(
+      createUiState(
+        items = listOf(
+          LibraryListItem.DividerItem(Long.MAX_VALUE, "Downloading"),
+          mockk<LibraryDownloadItem>(relaxed = true),
+          mockk<LibraryListItem.BookItem>(relaxed = true)
+        )
+      )
+    )
+
+    composeTestRule.onNodeWithTag(DOWNLOAD_BOOK_ITEM_TESTING_TAG).assertDoesNotExist()
+    composeTestRule.onNodeWithTag(ONLINE_BOOK_ITEM_TESTING_TAG).assertExists()
+  }
+
+  @Test
+  fun `selecting downloads shows downloads during catalog loading`() {
+    val viewModel = createMockViewModel()
+    val item = mockk<LibraryDownloadItem>(relaxed = true)
+    renderScreen(
+      createUiState(
+        items = listOf(item, mockk<LibraryListItem.BookItem>(relaxed = true)),
+        showScanningProgressBar = true,
+        isDownloadsTabSelected = true
+      ),
+      viewModel = viewModel
+    )
+
+    composeTestRule.onNodeWithTag(DOWNLOAD_BOOK_ITEM_TESTING_TAG).assertExists()
+    composeTestRule.onNodeWithTag(ONLINE_BOOK_ITEM_TESTING_TAG).assertDoesNotExist()
+    composeTestRule.onNodeWithTag(SHOW_FETCHING_LIBRARY_LAYOUT_TESTING_TAG).assertDoesNotExist()
+  }
+
+  @Test
+  fun `clicking downloads tab selects it`() {
+    val viewModel = createMockViewModel()
+    renderScreen(
+      createUiState(items = listOf(mockk<LibraryDownloadItem>(relaxed = true))),
+      viewModel = viewModel
+    )
+
+    composeTestRule.onNodeWithTag(DOWNLOADS_TAB_ITEM_TESTING_TAG).performClick()
+
+    verify { viewModel.selectDownloadsTab() }
   }
 }

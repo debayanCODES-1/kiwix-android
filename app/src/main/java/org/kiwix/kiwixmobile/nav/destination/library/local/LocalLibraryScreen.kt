@@ -43,14 +43,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomAppBarScrollBehavior
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
@@ -62,6 +68,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -97,9 +104,12 @@ import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.BooksOnDiskListIte
 import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.BooksOnDiskListItem.BookOnDisk
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.LocalLibraryUiState
 import org.kiwix.kiwixmobile.nav.destination.library.local.LocalLibraryViewModel.NoFileView
+import org.kiwix.kiwixmobile.nav.destination.library.online.DOWNLOAD_BOOK_ITEM_TESTING_TAG
+import org.kiwix.kiwixmobile.nav.destination.library.online.DownloadBookItem
 import org.kiwix.kiwixmobile.ui.BookItem
 import org.kiwix.kiwixmobile.ui.ZimFilesLanguageHeader
 import org.kiwix.kiwixmobile.zimManager.fileselectView.FileSelectListState
+import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem.LibraryDownloadItem
 import kotlin.math.roundToInt
 
 const val NO_FILE_TEXT_TESTING_TAG = "noFileTextTestingTag"
@@ -109,6 +119,9 @@ const val SELECT_FILE_BUTTON_TESTING_TAG = "selectFileButtonTestingTag"
 const val LOCAL_FILE_TRANSFER_MENU_BUTTON_TESTING_TAG = "localFileTransferMenuButtonTestingTag"
 const val SHOW_SWIPE_DOWN_TO_SCAN_FILE_SYSTEM_TEXT_TESTING_TAG =
   "showSwipeDownToScanFileSystemTextTestingTag"
+const val LOCAL_LIBRARY_TABS_ROW_TESTING_TAG = "localLibraryTabsRowTestingTag"
+const val LOCAL_LIBRARY_TAB_TESTING_TAG_PREFIX = "localLibraryTabTestingTag_"
+const val LOCAL_DOWNLOAD_LIST_TESTING_TAG = "localDownloadListTestingTag"
 private const val BACK_TO_TOP_ITEM_THRESHOLD = 5
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -123,12 +136,18 @@ fun LocalLibraryScreen(
   onClick: ((BookOnDisk) -> Unit)? = null,
   onLongClick: ((BookOnDisk) -> Unit)? = null,
   onMultiSelect: ((BookOnDisk) -> Unit)? = null,
+  onLibraryTabClick: () -> Unit = {},
+  onDownloadsTabClick: () -> Unit = {},
+  onPauseResumeClick: (LibraryDownloadItem) -> Unit = {},
+  onStopClick: (LibraryDownloadItem) -> Unit = {},
   bottomAppBarScrollBehaviour: BottomAppBarScrollBehavior?,
   onUserBackPressed: () -> BackPressActivityExtensions.Super,
   navHostController: NavHostController,
   snackbarHostState: SnackbarHostState,
   navigationIcon: @Composable () -> Unit
 ) {
+  val downloadsListState = rememberLazyListState()
+  val activeListState = if (state.isDownloadsTabSelected) downloadsListState else listState
   val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
   Scaffold(
     snackbarHost = { KiwixSnackbarHost(snackbarHostState = snackbarHostState) },
@@ -142,7 +161,7 @@ fun LocalLibraryScreen(
     },
     floatingActionButton = {
       LocalLibraryBackToTopButton(
-        listState = listState,
+        listState = activeListState,
         scrollBehavior = scrollBehavior,
         bottomAppBarScrollBehaviour = bottomAppBarScrollBehaviour
       )
@@ -165,7 +184,11 @@ fun LocalLibraryScreen(
       onClick,
       onLongClick,
       onMultiSelect,
-      listState
+      onLibraryTabClick,
+      onDownloadsTabClick,
+      onPauseResumeClick,
+      onStopClick,
+      activeListState
     )
   }
 }
@@ -178,6 +201,63 @@ private fun screenTitle(fileSelectListState: FileSelectListState): String =
     stringResource(R.string.library)
   }
 
+
+@Composable
+private fun LocalLibraryTabsRow(
+  isDownloadsSelected: Boolean,
+  onLibraryTabClick: () -> Unit,
+  onDownloadsTabClick: () -> Unit
+) {
+  Box(modifier = Modifier.fillMaxWidth()) {
+    HorizontalDivider(
+      modifier = Modifier
+        .fillMaxWidth()
+        .align(Alignment.BottomCenter),
+      color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    )
+    ScrollableTabRow(
+      selectedTabIndex = if (isDownloadsSelected) 1 else 0,
+      edgePadding = SIXTEEN_DP,
+      containerColor = Color.Transparent,
+      divider = {},
+      indicator = { tabPositions ->
+        tabPositions.getOrNull(if (isDownloadsSelected) 1 else 0)?.let { position ->
+          TabRowDefaults.SecondaryIndicator(
+            Modifier.tabIndicatorOffset(position),
+            color = MaterialTheme.colorScheme.primary
+          )
+        }
+      },
+      modifier = Modifier.semantics { testTag = LOCAL_LIBRARY_TABS_ROW_TESTING_TAG }
+    ) {
+      listOf(
+        stringResource(R.string.library) to onLibraryTabClick,
+        stringResource(R.string.downloading) to onDownloadsTabClick
+      ).forEachIndexed { index, (title, onClick) ->
+        val isSelected = index == if (isDownloadsSelected) 1 else 0
+        Tab(
+          selected = isSelected,
+          onClick = onClick,
+          text = {
+            Text(
+              text = title,
+              style = MaterialTheme.typography.labelLarge,
+              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+              color = if (isSelected) {
+                MaterialTheme.colorScheme.primary
+              } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+              }
+            )
+          },
+          modifier = Modifier
+            .height(FORTY_EIGHT_DP)
+            .semantics { testTag = "$LOCAL_LIBRARY_TAB_TESTING_TAG_PREFIX$index" }
+        )
+      }
+    }
+  }
+}
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LocalLibraryMainContent(
@@ -190,32 +270,81 @@ private fun LocalLibraryMainContent(
   onClick: ((BookOnDisk) -> Unit)? = null,
   onLongClick: ((BookOnDisk) -> Unit)? = null,
   onMultiSelect: ((BookOnDisk) -> Unit)? = null,
+  onLibraryTabClick: () -> Unit,
+  onDownloadsTabClick: () -> Unit,
+  onPauseResumeClick: (LibraryDownloadItem) -> Unit,
+  onStopClick: (LibraryDownloadItem) -> Unit,
   listState: LazyListState
 ) {
-  SwipeRefreshLayout(
-    isRefreshing = state.isSwipeRefreshing,
-    isEnabled = !state.scanning.isScanning,
-    onRefresh = onRefresh,
+  Column(
     modifier = Modifier
       .fillMaxSize()
       .padding(contentPadding)
   ) {
-    OnBackPressed(onUserBackPressed, navHostController)
-    if (state.scanning.isScanning) {
-      ContentLoadingProgressBar(
-        progressBarStyle = ProgressBarStyle.HORIZONTAL,
-        progress = state.scanning.progress
+    if (state.downloadItems.isNotEmpty()) {
+      LocalLibraryTabsRow(
+        isDownloadsSelected = state.isDownloadsTabSelected,
+        onLibraryTabClick = onLibraryTabClick,
+        onDownloadsTabClick = onDownloadsTabClick
       )
     }
-    if (state.noFileView.isVisible || state.fileSelectListState.bookOnDiskListItems.isEmpty()) {
-      NoFilesView(state.noFileView, onDownloadButtonClick)
-    } else {
-      BookItemList(
-        state.fileSelectListState,
-        onClick,
-        onLongClick,
-        onMultiSelect,
-        listState
+    SwipeRefreshLayout(
+      isRefreshing = state.isSwipeRefreshing,
+      isEnabled = !state.scanning.isScanning,
+      onRefresh = onRefresh,
+      modifier = Modifier
+        .fillMaxWidth()
+        .weight(1f)
+    ) {
+      OnBackPressed(onUserBackPressed, navHostController)
+      if (state.scanning.isScanning && !state.isDownloadsTabSelected) {
+        ContentLoadingProgressBar(
+          progressBarStyle = ProgressBarStyle.HORIZONTAL,
+          progress = state.scanning.progress
+        )
+      }
+      when {
+        state.isDownloadsTabSelected -> DownloadItemsList(
+          items = state.downloadItems,
+          listState = listState,
+          onPauseResumeClick = onPauseResumeClick,
+          onStopClick = onStopClick
+        )
+
+        state.noFileView.isVisible || state.fileSelectListState.bookOnDiskListItems.isEmpty() ->
+          NoFilesView(state.noFileView, onDownloadButtonClick)
+
+        else -> BookItemList(
+          state.fileSelectListState,
+          onClick,
+          onLongClick,
+          onMultiSelect,
+          listState
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun DownloadItemsList(
+  items: List<LibraryDownloadItem>,
+  listState: LazyListState,
+  onPauseResumeClick: (LibraryDownloadItem) -> Unit,
+  onStopClick: (LibraryDownloadItem) -> Unit
+) {
+  LazyColumn(
+    modifier = Modifier
+      .fillMaxSize()
+      .testTag(LOCAL_DOWNLOAD_LIST_TESTING_TAG),
+    state = listState
+  ) {
+    itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
+      DownloadBookItem(
+        index = index,
+        item = item,
+        onPauseResumeClick = onPauseResumeClick,
+        onStopClick = onStopClick
       )
     }
   }

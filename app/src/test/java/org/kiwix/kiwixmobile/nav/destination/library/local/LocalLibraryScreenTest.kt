@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -46,9 +47,15 @@ import org.kiwix.kiwixmobile.core.ui.components.SWIPE_REFRESH_TESTING_TAG
 import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.BooksOnDiskListItem
 import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.BooksOnDiskListItem.BookOnDisk
 import org.kiwix.kiwixmobile.core.zim_manager.fileselect_view.SelectionMode
+import org.kiwix.kiwixmobile.nav.destination.library.local.LOCAL_DOWNLOAD_LIST_TESTING_TAG
+import org.kiwix.kiwixmobile.nav.destination.library.local.LOCAL_LIBRARY_TAB_TESTING_TAG_PREFIX
+import org.kiwix.kiwixmobile.nav.destination.library.local.LOCAL_LIBRARY_TABS_ROW_TESTING_TAG
+import org.kiwix.kiwixmobile.nav.destination.library.online.DOWNLOAD_BOOK_ITEM_TESTING_TAG
 import org.kiwix.kiwixmobile.ui.BookItemScreen.BOOK_ITEM_CHECKBOX_TESTING_TAG
 import org.kiwix.kiwixmobile.ui.BookItemScreen.BOOK_ITEM_TESTING_TAG
 import org.kiwix.kiwixmobile.zimManager.fileselectView.FileSelectListState
+import org.kiwix.kiwixmobile.zimManager.libraryView.LibraryListItem.LibraryDownloadItem
+import org.junit.Assert.assertTrue
 import org.kiwix.sharedFunctions.TestApplication
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -71,9 +78,13 @@ class LocalLibraryScreenTest {
     scanningProgress: Int = 0,
     noFileViewVisible: Boolean = false,
     noFileViewTitle: String = "",
-    noFileViewButtonText: String = ""
+    noFileViewButtonText: String = "",
+    downloadItems: List<LibraryDownloadItem> = emptyList(),
+    isDownloadsTabSelected: Boolean = false
   ): LocalLibraryViewModel.LocalLibraryUiState = LocalLibraryViewModel.LocalLibraryUiState(
     fileSelectListState = FileSelectListState(bookOnDiskListItems, selectionMode),
+    downloadItems = downloadItems,
+    isDownloadsTabSelected = isDownloadsTabSelected,
     scanning = LocalLibraryViewModel.ScanningState(isScanning, scanningProgress),
     noFileView = LocalLibraryViewModel.NoFileView(
       noFileViewTitle,
@@ -89,6 +100,8 @@ class LocalLibraryScreenTest {
     onClick: (BookOnDisk) -> Unit = {},
     onLongClick: (BookOnDisk) -> Unit = {},
     onMultiSelect: (BookOnDisk) -> Unit = {},
+    onLibraryTabClick: () -> Unit = {},
+    onDownloadsTabClick: () -> Unit = {},
     listState: LazyListState? = null
   ) {
     composeTestRule.setContent {
@@ -101,6 +114,8 @@ class LocalLibraryScreenTest {
         onClick = onClick,
         onLongClick = onLongClick,
         onMultiSelect = onMultiSelect,
+        onLibraryTabClick = onLibraryTabClick,
+        onDownloadsTabClick = onDownloadsTabClick,
         bottomAppBarScrollBehaviour = null,
         onUserBackPressed = { mockk(relaxed = true) },
         navHostController = rememberNavController(),
@@ -149,6 +164,42 @@ class LocalLibraryScreenTest {
     composeTestRule
       .onNodeWithTag(BOOK_LIST_TESTING_TAG)
       .assertIsDisplayed()
+  }
+
+  @Test
+  fun localLibraryScreen_showsDownloadsTabAndItems_whenDownloadsSelected() {
+    renderScreen(
+      createTestState(
+        downloadItems = listOf(mockk(relaxed = true)),
+        isDownloadsTabSelected = true
+      )
+    )
+
+    composeTestRule.onNodeWithTag(LOCAL_LIBRARY_TABS_ROW_TESTING_TAG).assertIsDisplayed()
+    composeTestRule.onNodeWithTag(LOCAL_DOWNLOAD_LIST_TESTING_TAG).assertIsDisplayed()
+    composeTestRule.onNodeWithTag(DOWNLOAD_BOOK_ITEM_TESTING_TAG).assertIsDisplayed()
+  }
+
+  @Test
+  fun localLibraryScreen_hidesDownloadsTab_whenThereAreNoDownloads() {
+    renderScreen(createTestState())
+
+    composeTestRule.onNodeWithTag(LOCAL_LIBRARY_TABS_ROW_TESTING_TAG).assertDoesNotExist()
+  }
+
+  @Test
+  fun localLibraryScreen_downloadTabClick_triggersCallback() {
+    var clicked = false
+    renderScreen(
+      createTestState(downloadItems = listOf(mockk(relaxed = true))),
+      onDownloadsTabClick = { clicked = true }
+    )
+
+    composeTestRule
+      .onNodeWithTag("${LOCAL_LIBRARY_TAB_TESTING_TAG_PREFIX}1")
+      .performClick()
+
+    assertTrue(clicked)
   }
 
   @Test
